@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>메이플 보스노트</title>
+<meta name="theme-color" content="#0d0f1f" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="icon" href="./icon-192.png" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<style>
+  :root {
+    color-scheme: dark;
+    --f-bg: #0d0f1f;
+    --f-surface: #171a30;
+    --f-line: #262a45;
+    --f-line2: #1f2338;
+    --f-ink: #eceefa;
+    --f-muted: #8288ae;
+    --f-accent: #7cd4ff;
+    --f-warn: #ffb454;
+    --f-ok: #58e0a8;
+    --c-party: #7cd4ff;
+    --c-solo: #a97bff;
+    --f-danger: #ff6f6f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--f-bg);
+    color: var(--f-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+  .tab-panel { flex: 1; padding-bottom: 90px; display: flex; flex-direction: column; }
+  .tab-panel[hidden] { display: none; }
+
+  /* ── 상태줄 ── */
+  .statusline {
+    padding: 8px 20px; font-size: 12.5px; color: var(--f-warn);
+    background: color-mix(in srgb, var(--f-warn) 10%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--f-warn) 30%, transparent);
+  }
+  .statusline.clickable { cursor: pointer; }
+
+  /* ── 새로고침 버튼 (§6-4) ── */
+  .refresh-btn {
+    background: none; border: 0; color: var(--f-muted); font-size: 18px;
+    line-height: 1; cursor: pointer; padding: 4px; font-family: inherit;
+  }
+  .refresh-btn:active { color: var(--f-ink); }
+  .refresh-btn.spinning { color: var(--f-ink); animation: mbn-spin 0.8s linear infinite; }
+  @keyframes mbn-spin { to { transform: rotate(360deg); } }
+
+  /* ── 탭1 상단 ── */
+  .top {
+    padding: 22px 20px 18px;
+    background:
+      radial-gradient(120% 90% at 12% 0%, #2b2160 0%, transparent 62%),
+      radial-gradient(100% 80% at 92% 8%, #123a5c 0%, transparent 58%),
+      #0d0f1f;
+    border-bottom: 1px solid var(--f-line);
+  }
+  .top-head { display: flex; align-items: center; justify-content: space-between; }
+  .date { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--f-muted); font-weight: 700; }
+  .count { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
+  .count b { font-size: 46px; font-weight: 800; letter-spacing: -.045em; line-height: 1; }
+  .count span { font-size: 15px; color: var(--f-muted); }
+  .reset { margin-top: 10px; font-size: 12.5px; color: #b9a2ff; }
+  .reset b { font-weight: 700; }
+
+  /* ── 주간 현황 ── */
+  .weekly { padding: 16px 20px 18px; border-bottom: 1px solid var(--f-line); }
+  .wk-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .wk-head h3 { margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--f-muted); }
+  .wk-head .tot { font-size: 15px; font-weight: 800; letter-spacing: -.02em; }
+  .wk-head .tot i { font-style: normal; color: var(--f-muted); font-weight: 600; }
+  .wk-head .tot em { font-style: normal; font-size: 12px; color: var(--f-warn); margin-left: 5px; font-weight: 800; }
+  .wk-bar { margin-top: 9px; height: 6px; border-radius: 3px; background: #232746; overflow: hidden; display: flex; }
+  .wk-bar i { display: block; height: 100%; }
+  .wk-legend { margin-top: 10px; display: grid; gap: 7px; }
+  .wk-legend div { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--f-muted); }
+  .wk-legend .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .wk-legend .nm { flex: 1; color: var(--f-ink); font-weight: 600; }
+  .wk-legend .vl { font-weight: 700; letter-spacing: -.01em; }
+
+  /* ── 섹션 / 행 ── */
+  .sec { padding: 18px 20px 4px; }
+  .sec h3 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 800; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--f-muted); display: flex; align-items: center; gap: 8px;
+  }
+  .sec h3::after { content: ""; flex: 1; height: 1px; background: var(--f-line); }
+  .sec.late h3 { color: var(--f-warn); }
+  .sec.late h3::after { background: color-mix(in srgb, var(--f-warn) 26%, transparent); }
+  .sec.empty { display: none; }
+
+  /* ── 오늘 추천 (§2) ── */
+  .sec.today h3::after { display: none; }
+  .sec.today h3 .hint {
+    margin-left: auto; text-transform: none; letter-spacing: normal;
+    font-size: 12px; font-weight: 600; color: var(--f-muted);
+  }
+  .remain-toggle { padding: 12px 0; font-size: 13px; color: var(--f-muted); cursor: pointer; }
+
+  .row { display: flex; align-items: center; gap: 13px; padding: 11px 0; }
+  .gem {
+    width: 26px; height: 30px; flex: none; position: relative;
+    clip-path: polygon(50% 0, 100% 26%, 100% 74%, 50% 100%, 0 74%, 0 26%);
+    background: var(--gc); box-shadow: 0 0 14px -2px var(--gc);
+  }
+  .gem::before {
+    content: ""; position: absolute; inset: 0;
+    clip-path: polygon(50% 0, 100% 26%, 50% 50%, 0 26%);
+    background: rgba(255,255,255,.34);
+  }
+  .row .info { flex: 1; min-width: 0; }
+  .row .boss { font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
+  .row .who { font-size: 12.5px; color: var(--f-muted); margin-top: 1px; }
+  .row .when { display: flex; align-items: center; gap: 5px; }
+  .row .time { font-size: 13px; font-weight: 800; color: var(--f-accent); letter-spacing: -.015em; font-variant-numeric: tabular-nums; }
+  .row .ago {
+    font-size: 11px; font-weight: 800; letter-spacing: .02em; color: var(--f-warn);
+    border: 1px solid color-mix(in srgb, var(--f-warn) 40%, transparent);
+    padding: 2px 6px; border-radius: 4px; white-space: nowrap;
+  }
+  .row.clickable { cursor: pointer; }
+
+  .crow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--f-line2); cursor: pointer; }
+  .crow:last-child { border-bottom: 0; }
+  .crow .cn2 { font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
+  .crow .cnt { font-size: 12.5px; font-weight: 700; color: var(--f-muted); }
+
+  .no-char-hint { color: var(--f-muted); font-size: 14px; text-align: center; padding: 60px 20px; }
+
+  /* ── 탭바 ── */
+  .tabbar {
+    position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 480px; display: flex;
+    background: #10122499; backdrop-filter: blur(8px);
+    border-top: 1px solid var(--f-line);
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 40;
+  }
+  .tabbar button {
+    flex: 1; background: none; border: 0; font: inherit; cursor: pointer;
+    padding: 11px 0 13px; font-size: 11px; color: var(--f-muted);
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .tabbar button .ti { font-size: 17px; line-height: 1; }
+  .tabbar button.active { color: var(--f-accent); font-weight: 700; }
+
+  /* ── navbar (탭2) ── */
+  .navbar { display: flex; align-items: center; gap: 10px; padding: 18px 20px 14px; border-bottom: 1px solid var(--f-line); }
+  .navbar .back { color: var(--f-accent); font-size: 20px; line-height: 1; cursor: pointer; padding: 4px; margin: -4px; }
+  .navbar h2 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+  .navbar .sub { font-size: 12px; color: var(--f-muted); margin-left: auto; }
+
+  /* ── 캐릭터 목록 ── */
+  .clist { padding: 14px 16px; display: grid; gap: 10px; }
+  .ccard { background: var(--f-surface); border: 1px solid var(--f-line); border-radius: 12px; padding: 13px 15px; cursor: pointer; }
+  .ccard .cn { display: flex; align-items: baseline; gap: 8px; }
+  .ccard .cn b { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
+  .ccard .cn span { font-size: 12px; color: var(--f-muted); }
+  .ccard .cn .arw { margin-left: auto; color: var(--f-muted); font-size: 15px; }
+  .ccard .prog { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+  .ccard .prog .bar { flex: 1; height: 5px; border-radius: 3px; background: #232746; overflow: hidden; }
+  .ccard .prog .bar i { display: block; height: 100%; background: #a97bff; }
+  .ccard .prog .vl { font-size: 12px; font-weight: 700; color: var(--f-muted); }
+  .ccard .crystal { margin-top: 5px; font-size: 11px; color: var(--f-muted); }
+  .ccard .flag { margin-top: 9px; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: var(--f-warn); }
+  .ccard .flag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--f-warn); }
+  .ccard .empty-boss-note { margin-top: 8px; font-size: 12px; color: var(--f-muted); }
+
+  /* ── 캐릭터 상세 ── */
+  .dhead { padding: 16px 20px 14px; border-bottom: 1px solid var(--f-line); }
+  .dhead .wk { display: flex; align-items: baseline; justify-content: space-between; }
+  .dhead .wk small { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--f-muted); }
+  .dhead .wk b { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
+  .dhead .wk b i { font-style: normal; color: var(--f-muted); font-weight: 600; }
+  .dhead .bar { margin-top: 8px; height: 5px; border-radius: 3px; background: #232746; overflow: hidden; }
+  .dhead .bar i { display: block; height: 100%; background: #a97bff; }
+  .dhead .crystal { margin-top: 7px; font-size: 11.5px; color: var(--f-muted); text-align: right; }
+  .mon-badge { font-size: 10px; font-weight: 700; color: var(--f-accent); border: 1px solid var(--f-line); border-radius: 4px; padding: 1px 4px; margin-left: 4px; vertical-align: 1px; }
+
+  .dsec { padding: 16px 20px 2px; }
+  .dsec h3 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 800; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--f-muted); display: flex; align-items: center; gap: 8px;
+  }
+  .dsec h3::after { content: ""; flex: 1; height: 1px; background: var(--f-line); }
+  .dsec.loot h3 { color: var(--f-warn); }
+  .dsec.loot h3::after { background: color-mix(in srgb, var(--f-warn) 26%, transparent); }
+  .dsec.empty { display: none; }
+
+  .loot-row {
+    display: flex; align-items: center; gap: 11px; padding: 10px 12px;
+    background: color-mix(in srgb, var(--f-warn) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--f-warn) 22%, transparent);
+    border-radius: 9px; margin-bottom: 8px;
+  }
+  .loot-row.old { background: color-mix(in srgb, var(--f-danger) 9%, transparent); border-color: color-mix(in srgb, var(--f-danger) 26%, transparent); }
+  .loot-row .li { flex: 1; min-width: 0; }
+  .loot-row .ln { font-size: 14.5px; font-weight: 700; letter-spacing: -.015em; }
+  .loot-row .lm { font-size: 11.5px; color: var(--f-muted); margin-top: 1px; }
+  .loot-row .ld {
+    font-size: 11px; font-weight: 800; color: var(--f-ok); border: 1px solid currentColor;
+    padding: 3px 7px; border-radius: 5px; white-space: nowrap; background: none; cursor: pointer;
+  }
+
+  .brow { display: flex; align-items: center; gap: 11px; padding: 11px 0; border-bottom: 1px solid var(--f-line2); cursor: pointer; }
+  .brow:last-child { border-bottom: 0; }
+  .brow .bi { flex: 1; min-width: 0; }
+  .brow .bn { font-size: 14.5px; font-weight: 700; letter-spacing: -.015em; }
+  .brow .bs { font-size: 11.5px; color: var(--f-muted); margin-top: 2px; display: flex; align-items: center; gap: 5px; }
+  .brow .bs .rep { color: var(--f-accent); }
+  .brow .chk { font-size: 15px; color: var(--f-ok); font-weight: 800; }
+  .brow .chk.no { color: #333856; }
+  .brow.done .bn { color: var(--f-muted); }
+
+  .fullbtn { margin: 14px 20px 20px; padding: 12px; text-align: center; border: 1px solid var(--f-line); border-radius: 10px; font-size: 13.5px; color: var(--f-accent); font-weight: 700; cursor: pointer; }
+
+  /* ── 보스 고르기 ── */
+  ul.boss-toggle-list { list-style: none; margin: 0; padding: 4px 20px 20px; }
+  ul.boss-toggle-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--f-line2); font-size: 14px; }
+  ul.boss-toggle-list li:first-child { border-top: none; }
+  .reg-badge { font-size: 10px; color: var(--f-muted); border: 1px solid var(--f-line); border-radius: 4px; padding: 2px 5px; margin-left: auto; }
+  input[type=checkbox] { width: 19px; height: 19px; accent-color: var(--f-accent); flex: none; }
+
+  /* ── 보스 시트 ── */
+  .sheet-bg { position: fixed; inset: 0; z-index: 50; }
+  .sheet-dim { position: absolute; inset: 0; background: rgba(6,7,16,.72); }
+  .sheet {
+    position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+    width: 100%; max-width: 480px;
+    background: var(--f-surface); border-top: 1px solid var(--f-line);
+    border-radius: 20px 20px 0 0; padding: 8px 20px 22px; max-height: 88vh; overflow-y: auto;
+  }
+  .grab { width: 34px; height: 4px; border-radius: 2px; background: #3a3f63; margin: 4px auto 14px; }
+  .sheet .sh { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .sheet .sh b { font-size: 18px; font-weight: 800; letter-spacing: -.025em; }
+  .sheet .shm { font-size: 12.5px; color: var(--f-muted); margin-bottom: 16px; }
+
+  .fld { padding: 13px 0; border-top: 1px solid var(--f-line); }
+  .fld > .fl { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--f-muted); margin-bottom: 9px; }
+  .swrow { display: flex; align-items: center; justify-content: space-between; }
+  .swrow .st { font-size: 14.5px; font-weight: 600; }
+  .swrow .sd { font-size: 11.5px; color: var(--f-muted); margin-top: 1px; }
+  .sw { width: 44px; height: 26px; border-radius: 13px; background: #2e3355; position: relative; flex: none; border: 0; cursor: pointer; padding: 0; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #6d7398; transition: left .12s; }
+  .sw.on { background: var(--f-accent); }
+  .sw.on::after { left: 21px; background: #0d0f1f; }
+
+  .days { display: flex; gap: 6px; }
+  .days button { flex: 1; text-align: center; padding: 8px 0; border-radius: 8px; border: 1px solid var(--f-line); font-size: 13px; color: var(--f-muted); background: none; cursor: pointer; font: inherit; }
+  .days button.on { background: var(--f-accent); border-color: var(--f-accent); color: #0d0f1f; font-weight: 800; }
+
+  .timebox { padding: 8px 14px; border: 1px solid var(--f-line); border-radius: 10px; }
+  .timebox input[type=time] {
+    width: 100%; background: none; border: 0; color: var(--f-ink); cursor: pointer;
+    font-size: 20px; font-weight: 800; letter-spacing: -.03em; font-family: inherit; padding: 4px 0;
+  }
+
+  .drops { display: grid; gap: 7px; }
+  .drop { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--f-line); border-radius: 9px; cursor: pointer; }
+  .drop .box { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #3a3f63; flex: none; display: grid; place-items: center; color: #0d0f1f; font-size: 11px; font-weight: 900; }
+  .drop.on { border-color: color-mix(in srgb, var(--f-warn) 40%, transparent); background: color-mix(in srgb, var(--f-warn) 7%, transparent); }
+  .drop.on .box { border-color: var(--f-warn); background: var(--f-warn); }
+  .drop .dn { flex: 1; font-size: 14px; font-weight: 600; }
+  .savebtn { margin-top: 18px; padding: 13px; text-align: center; border-radius: 11px; background: var(--f-accent); color: #0d0f1f; font-weight: 800; font-size: 15px; cursor: pointer; border: 0; width: 100%; font: inherit; }
+  .fld.off { opacity: .32; pointer-events: none; }
+  .fld.off .sw { background: #262a45; }
+  .offmsg { margin: 10px 0 0; font-size: 12px; color: var(--f-muted); }
+  .already-recorded { margin: 10px 0 0; font-size: 12px; color: var(--f-muted); }
+
+  /* ── 탭3 분배금 / 탭4 설정 (시안 없음 — 시트 필드 스타일 재사용) ── */
+  .plain-tab { padding: 18px 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--f-muted); }
+  .field input {
+    background: var(--f-surface); border: 1px solid var(--f-line); color: var(--f-ink);
+    border-radius: 10px; padding: 12px 14px; font-size: 17px; text-align: right; font-family: inherit;
+  }
+  .btn-group { display: flex; gap: 8px; margin-bottom: 14px; }
+  .toggle-btn {
+    flex: 1; background: var(--f-surface); border: 1px solid var(--f-line); color: var(--f-ink);
+    border-radius: 10px; padding: 11px 0; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .toggle-btn.active { background: var(--f-accent); border-color: var(--f-accent); color: #0d0f1f; font-weight: 800; }
+  .result-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-top: 1px solid var(--f-line); font-size: 14px; }
+  .result-row strong { font-size: 17px; }
+
+  .settings-section { background: var(--f-surface); border: 1px solid var(--f-line); border-radius: 12px; padding: 15px; margin-bottom: 14px; }
+  .settings-section h2 { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 12px; color: var(--f-muted); }
+  .settings-row { display: flex; gap: 8px; }
+  .settings-row input[type=text] {
+    flex: 1; background: var(--f-bg); border: 1px solid var(--f-line); color: var(--f-ink);
+    border-radius: 10px; padding: 11px 12px; font-size: 15px; font-family: inherit;
+  }
+  .settings-row button, .full-btn {
+    background: var(--f-accent); border: none; color: #0d0f1f; font-weight: 700;
+    border-radius: 10px; padding: 11px 16px; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .full-btn { width: 100%; margin-top: 4px; }
+  .status-line { font-size: 12.5px; margin-top: 8px; color: var(--f-muted); }
+  .status-line.ok { color: var(--f-ok); }
+  .status-line.err { color: var(--f-danger); }
+
+  .world-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .world-tabs button {
+    background: var(--f-bg); border: 1px solid var(--f-line); color: var(--f-muted);
+    border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  .world-tabs button.active { background: var(--f-accent); border-color: var(--f-accent); color: #0d0f1f; font-weight: 700; }
+
+  ul.char-toggle-list { list-style: none; margin: 0; padding: 0; }
+  ul.char-toggle-list li { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--f-line2); font-size: 14px; }
+  ul.char-toggle-list li:first-child { border-top: none; }
+  ul.char-toggle-list .lbl { flex: 1; }
+  ul.char-toggle-list .sub { color: var(--f-muted); font-size: 12px; }
+
+  .settings-row-item { display: flex; align-items: center; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <main id="tabToday" class="tab-panel">
+    <div id="todayStatusLine" class="statusline" hidden></div>
+    <div class="top">
+      <div class="top-head">
+        <div class="date" id="todayDateLabel"></div>
+        <button type="button" class="refresh-btn" id="todayRefreshBtn">↻</button>
+      </div>
+      <div class="count"><b class="num" id="remainCount">0</b><span>개 남았어요</span></div>
+      <div class="reset" id="weeklyResetLine"></div>
+    </div>
+    <div class="weekly" id="weeklySection"></div>
+    <div class="sec late" id="lateSection"><h3>밀린 것</h3><div id="lateRows"></div></div>
+    <div class="sec" id="partySection"><h3>파티 약속</h3><div id="partyRows"></div></div>
+    <div class="sec today" id="recommendedSection"><h3>오늘 추천<span class="hint">오늘 접속하는 캐릭터</span></h3><div id="recommendedRows"></div></div>
+    <div class="sec" id="remainSection"><div class="remain-toggle" id="remainToggle"></div><div id="remainRows" hidden></div></div>
+    <div class="no-char-hint" id="todayEmptyHint" hidden>설정 탭에서 API 키를 입력하고,<br>캐릭터 탭에서 관리할 캐릭터·보스를 골라주세요.</div>
+  </main>
+
+  <main id="tabCharacter" class="tab-panel" hidden>
+    <div id="charStatusLine" class="statusline" hidden></div>
+    <div id="charListView">
+      <div class="navbar"><h2>캐릭터</h2><span class="sub" id="charCountSub"></span><button type="button" class="refresh-btn" id="charRefreshBtn">↻</button></div>
+      <div class="clist" id="charList"></div>
+      <div class="no-char-hint" id="charEmptyHint" hidden>설정 탭에서 API 키를 입력하고<br>관리할 캐릭터를 불러와 주세요.</div>
+    </div>
+    <div id="charDetailView" hidden>
+      <div class="navbar"><span class="back" id="charDetailBack">‹</span><h2 id="charDetailName"></h2><span class="sub" id="charDetailSub"></span></div>
+      <div class="dhead" id="charDetailWeekly"></div>
+      <div class="dsec loot" id="charDetailLoot"><h3>분배 안 한 템</h3><div id="charDetailLootRows"></div></div>
+      <div class="dsec" id="charDetailBossSec"><h3>보스</h3><div id="charDetailBossRows"></div></div>
+      <div class="fullbtn" id="openBossPickerBtn">잡을 보스 고르기</div>
+    </div>
+    <div id="bossPickerView" hidden>
+      <div class="navbar"><span class="back" id="bossPickerBack">‹</span><h2>잡을 보스 고르기</h2></div>
+      <p class="status-line" id="bossPickerStatus" style="padding:0 20px"></p>
+      <p class="status-line err" id="bossPickerMismatchNotice" style="padding:0 20px" hidden>인게임 등록 목록이 바뀌었습니다. 아래 버튼으로 다시 불러오세요.</p>
+      <div class="fullbtn" id="resyncTrackedBtn">인게임 등록대로 다시 불러오기</div>
+      <ul class="boss-toggle-list" id="bossPickerList"></ul>
+    </div>
+  </main>
+
+  <main id="tabDistribute" class="tab-panel plain-tab" hidden>
+    <div class="field">
+      <label for="calcSale">판매가</label>
+      <input id="calcSale" inputmode="numeric" />
+    </div>
+    <div class="field">
+      <label for="calcNet">실수령</label>
+      <input id="calcNet" inputmode="numeric" />
+    </div>
+    <div class="btn-group" id="feeGroup">
+      <button class="toggle-btn" data-fee="0.05">5%</button>
+      <button class="toggle-btn" data-fee="0.03">3%</button>
+      <button class="toggle-btn" data-fee="0">0%</button>
+    </div>
+    <div class="btn-group" id="partyGroup">
+      <button class="toggle-btn" data-n="2">2</button>
+      <button class="toggle-btn" data-n="3">3</button>
+      <button class="toggle-btn" data-n="4">4</button>
+      <button class="toggle-btn" data-n="5">5</button>
+      <button class="toggle-btn" data-n="6">6</button>
+    </div>
+    <div class="result-row"><span>파티원 1인당 받는 금액</span><strong id="resPartner">-</strong></div>
+    <div class="result-row"><span>총대가 1명에게 보낼 금액</span><strong id="resSend">-</strong></div>
+    <div class="result-row"><span>내 최종 실수령</span><strong id="resMyNet">-</strong></div>
+  </main>
+
+  <main id="tabSettings" class="tab-panel plain-tab" hidden>
+    <section class="settings-section">
+      <h2>넥슨 오픈API 키</h2>
+      <div class="settings-row">
+        <input id="apiKeyInput" type="text" placeholder="API 키 붙여넣기" autocomplete="off" />
+        <button id="apiKeyVerifyBtn">확인</button>
+      </div>
+      <p id="apiKeyStatus" class="status-line"></p>
+    </section>
+
+    <section class="settings-section">
+      <h2>캐릭터 불러오기</h2>
+      <button id="loadCharactersBtn" class="full-btn">계정 캐릭터 불러오기</button>
+      <p id="loadCharactersStatus" class="status-line"></p>
+      <div id="worldTabs" class="world-tabs"></div>
+      <ul id="accountCharacterList" class="char-toggle-list"></ul>
+    </section>
+
+    <section class="settings-section">
+      <h2>기본 수수료율</h2>
+      <div class="btn-group" id="defaultFeeGroup">
+        <button class="toggle-btn" data-fee="0.05">5%</button>
+        <button class="toggle-btn" data-fee="0.03">3%</button>
+        <button class="toggle-btn" data-fee="0">0%</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <div class="settings-row-item">
+        <span>서버 나눠 보기</span>
+        <button class="sw" id="splitByWorldSw"></button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab-btn active" data-tab="today"><span class="ti">◆</span>오늘</button>
+    <button class="tab-btn" data-tab="character"><span class="ti">☰</span>캐릭터</button>
+    <button class="tab-btn" data-tab="distribute"><span class="ti">₩</span>분배금</button>
+    <button class="tab-btn" data-tab="settings"><span class="ti">⚙</span>설정</button>
+  </nav>
+
+  <div class="sheet-bg" id="bossSheetBg" hidden>
+    <div class="sheet-dim" id="bossSheetDim"></div>
+    <div class="sheet" id="bossSheet"></div>
+  </div>
+
+</div>
+<script src="./app.js"></script>
+</body>
+</html>
