@@ -74,6 +74,8 @@ const STORE = {
   settings: "mbn.settings",
   cache: "mbn.cache",
   schedule: "mbn.schedule",
+  parties: "mbn.parties",
+  partiesMigrated: "mbn.partiesMigrated",
   loot: "mbn.loot",
   postponed: "mbn.postponed",
   lastReset: "mbn.lastReset",
@@ -129,6 +131,57 @@ function getSchedule() {
 function setSchedule(s) {
   saveJSON(STORE.schedule, s);
 }
+// 파티 = 한 캐릭터가 한 번에 같이 도는 보스 묶음. 요일·시간·매주고정을 파티가 들고 있다.
+// { "<ocid>": [ { id, day, time, fixed, bosses: ["<name>|<difficulty>", ...] } ] }
+// 보스 하나는 파티 하나에만 속한다.
+function getParties() {
+  return loadJSON(STORE.parties, {});
+}
+function setParties(p) {
+  saveJSON(STORE.parties, p);
+}
+// 한 캐릭터의 bossKey → 소속 파티 맵. 루프에서 매번 찾지 않으려고 미리 만든다.
+function partyByBossMap(parties, ocid) {
+  const m = new Map();
+  (parties[ocid] || []).forEach((pt) => pt.bosses.forEach((k) => m.set(k, pt)));
+  return m;
+}
+function partyWhenLabel(pt) {
+  if (pt.day === null || pt.day === undefined || !pt.time) return "시간 미정";
+  return `${DAY_LABELS_FULL[pt.day]} ${pt.time}`;
+}
+
+// mbn.schedule에 보스마다 흩어져 있던 party:true를 (요일·시간·매주고정)이 같은 것끼리 묶어
+// mbn.parties로 옮긴다. 한 번만 돈다.
+function migratePartiesOnce() {
+  if (localStorage.getItem(STORE.partiesMigrated)) return;
+  const schedule = getSchedule();
+  const parties = getParties();
+  let scheduleChanged = false;
+  for (const key of Object.keys(schedule)) {
+    const s = schedule[key];
+    if (!s || !s.party) continue;
+    const sep = key.indexOf("|");
+    const ocid = key.slice(0, sep);
+    const bkey = key.slice(sep + 1);
+    const day = s.day === undefined ? null : s.day;
+    const time = s.time || "";
+    const fixed = !!s.fixed;
+    if (!parties[ocid]) parties[ocid] = [];
+    let pt = parties[ocid].find((x) => x.day === day && x.time === time && x.fixed === fixed);
+    if (!pt) {
+      pt = { id: cryptoId(), day, time, fixed, bosses: [] };
+      parties[ocid].push(pt);
+    }
+    if (!pt.bosses.includes(bkey)) pt.bosses.push(bkey);
+    delete schedule[key]; // 스케줄 정보는 이제 파티가 갖는다
+    scheduleChanged = true;
+  }
+  setParties(parties);
+  if (scheduleChanged) setSchedule(schedule);
+  localStorage.setItem(STORE.partiesMigrated, "1");
+}
+
 function getLoot() {
   return loadJSON(STORE.loot, []);
 }
@@ -253,6 +306,21 @@ function applyWeeklyReset() {
     }
   }
   if (changed) setSchedule(schedule);
+
+  // 파티는 묶음 자체는 남기고 약속(요일·시간)만 비운다. 매주 고정이면 그대로 둔다.
+  const parties = getParties();
+  let pChanged = false;
+  for (const ocid of Object.keys(parties)) {
+    parties[ocid].forEach((pt) => {
+      if (!pt.fixed && (pt.day !== null || pt.time)) {
+        pt.day = null;
+        pt.time = "";
+        pChanged = true;
+      }
+    });
+  }
+  if (pChanged) setParties(parties);
+
   setPostponed({});
 }
 // "HH:MM" 문자열을 오늘 KST 날짜 기준 epoch ms로 변환한다 (§3-1 자동 판정용)
@@ -370,18 +438,22 @@ function renderToday() {
   const cache = getCache();
   const tracked = getTracked();
   const schedule = getSchedule();
+  const parties = getParties();
   const postponed = getPostponed();
   const todayDow = kstDow();
 
-  // §2-3-b 1: "오늘 일정 있는 캐릭터" = 그 캐릭터의 보스 중 day===오늘인 스케줄이 하나라도 있는 캐릭터.
-  // party 여부·time은 안 본다.
+  // §2-3-b 1: "오늘 일정 있는 캐릭터" = 그 캐릭터의 보스 중 day===오늘인 것이 하나라도 있는 캐릭터.
+  // 요일은 파티 소속이면 파티가, 아니면 mbn.schedule이 들고 있다.
   const todayScheduledOcids = new Set();
   for (const ch of characters) {
+    const pbm = partyByBossMap(parties, ch.ocid);
     const trackedList = tracked[ch.ocid] || [];
     for (const tb of trackedList) {
       if (tb.cycle === "bossDaily") continue;
-      const sched = schedule[scheduleKey(ch.ocid, tb.name, tb.difficulty)];
-      if (sched && sched.day === todayDow) {
+      const bk = bossKey(tb.name, tb.difficulty);
+      const pt = pbm.get(bk);
+      const day = pt ? pt.day : (schedule[scheduleKey(ch.ocid, tb.name, tb.difficulty)] || {}).day;
+      if (day === todayDow) {
         todayScheduledOcids.add(ch.ocid);
         break;
       }
@@ -389,9 +461,11 @@ function renderToday() {
   }
 
   const late = [];
-  const party = [];
   const remain = [];
   const recommendedCountByOcid = new Map();
+  const todayPartyCards = new Map(); // party.id -> { ch, pt, bosses[] }
+  let weekPartyRemain = 0;
+  let todayPartyRemain = 0;
   let sumCount = 0;
   const worldTotals = new Map(); // world -> {count, limit}
   let postponedChanged = false;
@@ -408,10 +482,25 @@ function renderToday() {
     }
     const byKey = entry ? new Map((entry.payload.boss_contents || []).map((b) => [bossKey(b.content_name, b.difficulty), b])) : new Map();
     const trackedList = tracked[ch.ocid] || [];
+    const trackedKeys = new Set(trackedList.filter((tb) => tb.cycle !== "bossDaily").map((tb) => bossKey(tb.name, tb.difficulty)));
+    const pbm = partyByBossMap(parties, ch.ocid);
+    const isDone = (bk) => {
+      const live = byKey.get(bk);
+      return !!(live && live.complete_flag === "true");
+    };
+
+    // 상단 카운트는 파티 단위로 센다. 파티 안 보스를 하나라도 안 잡았으면 그 일정은 남은 것이다.
+    for (const pt of parties[ch.ocid] || []) {
+      const members = pt.bosses.filter((bk) => trackedKeys.has(bk));
+      if (members.length === 0 || members.every(isDone)) continue;
+      weekPartyRemain++;
+      if (pt.day === todayDow) todayPartyRemain++;
+    }
+
     for (const tb of trackedList) {
       if (tb.cycle === "bossDaily") continue;
-      const live = byKey.get(bossKey(tb.name, tb.difficulty));
-      const done = !!(live && live.complete_flag === "true");
+      const bk = bossKey(tb.name, tb.difficulty);
+      const done = isDone(bk);
       const key = scheduleKey(ch.ocid, tb.name, tb.difficulty);
       if (done) {
         if (postponed[key]) {
@@ -420,43 +509,45 @@ function renderToday() {
         }
         continue;
       }
-      const sched = schedule[key] || { party: false };
+      const pt = pbm.get(bk) || null;
       let pp = postponed[key];
-      const isPartyToday = sched.party && sched.time && sched.day === todayDow;
+      const isPartyToday = !!(pt && pt.time && pt.day === todayDow);
 
       // §3-1: 파티 약속(day===오늘, time 지정)이고 약속시간+1시간이 지났고 아직 postponed가
       // 없으면(=한 번도 판정 안 됐으면) 자동으로 밀린 것으로 올린다.
-      if (!pp && isPartyToday && Date.now() > kstTimeTodayEpochMs(sched.time) + 3600000) {
+      if (!pp && isPartyToday && Date.now() > kstTimeTodayEpochMs(pt.time) + 3600000) {
         pp = { since: kstDateStr(), memo: "", auto: true };
         postponed[key] = pp;
         postponedChanged = true;
       }
 
       if (pp && !pp.off) {
-        late.push({ ch, tb, sched, since: pp.since, memo: pp.memo });
+        late.push({ ch, tb, party: !!pt, since: pp.since, memo: pp.memo });
       } else if (isPartyToday) {
-        party.push({ ch, tb, sched });
+        const card = todayPartyCards.get(pt.id) || { ch, pt, bosses: [] };
+        card.bosses.push(tb);
+        todayPartyCards.set(pt.id, card);
       } else if (todayScheduledOcids.has(ch.ocid)) {
         recommendedCountByOcid.set(ch.ocid, (recommendedCountByOcid.get(ch.ocid) || 0) + 1);
       } else {
-        remain.push({ ch, tb, sched });
+        remain.push({ ch, tb, party: !!pt });
       }
     }
   }
   if (postponedChanged) setPostponed(postponed);
 
   late.sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0));
-  party.sort((a, b) => (a.sched.time < b.sched.time ? -1 : a.sched.time > b.sched.time ? 1 : 0));
+  const partyCards = Array.from(todayPartyCards.values()).sort((a, b) => (a.pt.time < b.pt.time ? -1 : a.pt.time > b.pt.time ? 1 : 0));
 
-  const recommendedTotal = Array.from(recommendedCountByOcid.values()).reduce((a, b) => a + b, 0);
-  document.getElementById("remainCount").textContent = late.length + party.length + recommendedTotal;
+  document.getElementById("remainCount").textContent = weekPartyRemain;
+  document.getElementById("remainCountSub").textContent = `오늘 ${todayPartyRemain}개 · 이번 주 파티 일정 기준`;
 
   renderWeeklySection(sumCount, worldTotals, characters);
 
   toggleSec("lateSection", late.length > 0);
   document.getElementById("lateRows").innerHTML = late.map(rowHtmlLate).join("");
-  toggleSec("partySection", party.length > 0);
-  document.getElementById("partyRows").innerHTML = party.map(rowHtmlParty).join("");
+  toggleSec("partySection", partyCards.length > 0);
+  document.getElementById("partyRows").innerHTML = partyCards.map(partyCardHtml).join("");
 
   // §2-3-b 2: 뺐더니 0개가 된 캐릭터는 recommendedCountByOcid에 아예 안 들어오므로 자연히 빠진다.
   toggleSec("recommendedSection", recommendedCountByOcid.size > 0);
@@ -528,7 +619,7 @@ function bossLabel(tb) {
 }
 
 function rowHtmlLate(item) {
-  const gc = item.sched.party ? "var(--c-party)" : "var(--c-solo)";
+  const gc = item.party ? "var(--c-party)" : "var(--c-solo)";
   const who = item.memo ? `${escapeHtml(item.ch.name)} · ${escapeHtml(item.memo)}` : escapeHtml(item.ch.name);
   return `<div class="row clickable" data-ocid="${item.ch.ocid}" data-name="${escapeHtml(item.tb.name)}" data-difficulty="${item.tb.difficulty}">
     <span class="gem" style="--gc:${gc}"></span>
@@ -536,11 +627,19 @@ function rowHtmlLate(item) {
     <span class="ago">${formatAgo(daysSince(item.since))}</span>
   </div>`;
 }
-function rowHtmlParty(item) {
-  return `<div class="row clickable" data-ocid="${item.ch.ocid}" data-name="${escapeHtml(item.tb.name)}" data-difficulty="${item.tb.difficulty}">
-    <span class="gem" style="--gc:var(--c-party)"></span>
-    <span class="info"><span class="boss">${bossLabel(item.tb)}</span> <span class="who">${escapeHtml(item.ch.name)}</span></span>
-    <span class="when"><span class="time num">${item.sched.time}</span></span>
+// 파티 하나 = 카드 하나. 같이 도는 보스를 한 묶음으로 보여준다.
+function partyCardHtml(card) {
+  const rows = card.bosses
+    .map(
+      (tb) => `<div class="row clickable" data-ocid="${card.ch.ocid}" data-name="${escapeHtml(tb.name)}" data-difficulty="${tb.difficulty}">
+      <span class="gem" style="--gc:var(--c-party)"></span>
+      <span class="info"><span class="boss">${bossLabel(tb)}</span></span>
+    </div>`
+    )
+    .join("");
+  return `<div class="pcard">
+    <div class="pch"><span class="time num">${escapeHtml(card.pt.time)}</span><span class="pcn">${escapeHtml(card.ch.name)}</span><span class="pcc num">${card.bosses.length}개</span></div>
+    ${rows}
   </div>`;
 }
 function wireTodayRowClicks() {
@@ -590,25 +689,41 @@ function showBossPicker() {
   renderBossPicker(currentCharDetailOcid);
 }
 
-// 관리 목록(mbn.tracked) 기준 이번 주 진행. API의 결정석 한도(12)와는 세는 대상이 다르다.
-// 분모 = 앱에서 관리 중인 보스 개수, 분자 = 그중 complete_flag가 켜진 개수.
-function trackedProgress(ocid, cacheEntry) {
+// 관리 목록(mbn.tracked) 기준 아직 안 잡은 보스 개수. API의 결정석 한도(12)와는 세는 대상이 다르다.
+// 주간과 월간은 리셋 주기가 달라 따로 센다 — 섞으면 "이번 주에 뭐가 남았나"를 알 수 없다.
+function trackedRemaining(ocid, cacheEntry) {
   const tracked = getTracked()[ocid] || [];
   if (!cacheEntry || tracked.length === 0) return null;
   const byKey = new Map((cacheEntry.payload.boss_contents || []).map((b) => [bossKey(b.content_name, b.difficulty), b]));
-  let done = 0;
+  const r = { left: 0, monthLeft: 0, monthTotal: 0 };
   tracked.forEach((tb) => {
     const live = byKey.get(bossKey(tb.name, tb.difficulty));
-    if (live && live.complete_flag === "true") done++;
+    const cleared = !!(live && live.complete_flag === "true");
+    if (tb.cycle === "bossMonthly") {
+      r.monthTotal++;
+      if (!cleared) r.monthLeft++;
+    } else if (!cleared) {
+      r.left++;
+    }
   });
-  return { done, total: tracked.length };
+  return r;
+}
+
+// 초록 = 다 잡음, 빨강 = 남음. 캐릭터 카드와 상세 헤더가 같은 라벨을 쓴다.
+function remainLabel(left) {
+  return left === 0 ? `<b class="st-ok">완료</b>` : `남은 <b class="st-bad num">${left}</b>`;
+}
+// 월간은 개수보다 잡았나 안 잡았나가 궁금한 정보라 완료/미완료로만 쓴다.
+function monthLabel(rem) {
+  if (rem.monthTotal === 0) return "";
+  return rem.monthLeft === 0 ? `월간 <b class="st-ok">완료</b>` : `월간 <b class="st-bad">미완료</b>`;
 }
 
 // 레벨 높은 순. 관리 보스를 다 끝낸 캐릭터는 맨 아래로 내린다.
 function sortCharacters(characters, cache) {
   const isDone = (ch) => {
-    const p = trackedProgress(ch.ocid, cache[ch.ocid]);
-    return p && p.done >= p.total ? 1 : 0;
+    const r = trackedRemaining(ch.ocid, cache[ch.ocid]);
+    return r && r.left + r.monthLeft === 0 ? 1 : 0;
   };
   return characters.slice().sort((a, b) => isDone(a) - isDone(b) || b.level - a.level);
 }
@@ -636,12 +751,12 @@ function renderCharList() {
 
 function renderCcard(ch, cacheEntry, lootCount) {
   let progHtml = "";
-  const prog = trackedProgress(ch.ocid, cacheEntry);
-  if (prog) {
+  const rem = trackedRemaining(ch.ocid, cacheEntry);
+  if (rem) {
     const p = cacheEntry.payload;
-    const width = Math.min(100, (prog.done / prog.total) * 100);
-    const crystal = p.weekly_boss_clear_limit_count > 0 ? `<div class="crystal num">결정석 ${p.weekly_boss_clear_count} / ${p.weekly_boss_clear_limit_count}</div>` : "";
-    progHtml = `<div class="prog"><span class="bar"><i style="width:${width}%"></i></span><span class="vl num">${prog.done} / ${prog.total}</span></div>${crystal}`;
+    const mon = monthLabel(rem);
+    const crystal = p.weekly_boss_clear_limit_count > 0 ? `<span class="crystal num">결정석 ${p.weekly_boss_clear_count} / ${p.weekly_boss_clear_limit_count}</span>` : "";
+    progHtml = `<div class="rem"><span class="rv">${remainLabel(rem.left)}</span>${mon ? `<span class="mon">${mon}</span>` : ""}${crystal}</div>`;
   } else if (cacheEntry && (cacheEntry.payload.boss_contents || []).length === 0) {
     progHtml = `<div class="empty-boss-note">인게임 보스 스케줄러를 먼저 설정해 주세요</div>`;
   }
@@ -663,12 +778,12 @@ function renderCharDetail(ocid) {
 
   const cacheEntry = getCache()[ocid];
   const weeklyEl = document.getElementById("charDetailWeekly");
-  const prog = trackedProgress(ocid, cacheEntry);
-  if (prog) {
+  const rem = trackedRemaining(ocid, cacheEntry);
+  if (rem) {
     const p = cacheEntry.payload;
-    const width = Math.min(100, (prog.done / prog.total) * 100);
-    const crystal = p.weekly_boss_clear_limit_count > 0 ? `<div class="crystal num">결정석 ${p.weekly_boss_clear_count} / ${p.weekly_boss_clear_limit_count}</div>` : "";
-    weeklyEl.innerHTML = `<div class="wk"><small>이번 주</small><b><span class="num">${prog.done}</span> <i class="num">/ ${prog.total}</i></b></div><div class="bar"><i style="width:${width}%"></i></div>${crystal}`;
+    const mon = monthLabel(rem);
+    const crystal = p.weekly_boss_clear_limit_count > 0 ? `<span class="crystal num">결정석 ${p.weekly_boss_clear_count} / ${p.weekly_boss_clear_limit_count}</span>` : "";
+    weeklyEl.innerHTML = `<span class="wk">${remainLabel(rem.left)}${mon ? ` · ${mon}` : ""}</span>${crystal}`;
     weeklyEl.style.display = "";
   } else {
     weeklyEl.style.display = "none";
@@ -698,34 +813,57 @@ function renderCharDetail(ocid) {
 
   const tracked = (getTracked()[ocid] || []).slice().sort((a, b) => a.order - b.order);
   const schedule = getSchedule();
+  const parties = getParties();
+  const pbm = partyByBossMap(parties, ocid);
   const byKey = cacheEntry ? new Map((cacheEntry.payload.boss_contents || []).map((b) => [bossKey(b.content_name, b.difficulty), b])) : new Map();
-  document.getElementById("charDetailBossRows").innerHTML = tracked
-    .map((tb) => {
-      const live = byKey.get(bossKey(tb.name, tb.difficulty));
-      const done = !!(live && live.complete_flag === "true");
-      const key = scheduleKey(ocid, tb.name, tb.difficulty);
-      const sched = schedule[key] || { party: false };
-      const gc = sched.party ? "var(--c-party)" : "var(--c-solo)";
-      let sub = "솔플";
-      if (sched.party) {
-        sub = "파티";
-        if (sched.day !== null && sched.day !== undefined && sched.time) {
-          sub += ` · ${DAY_LABELS_FULL[sched.day]} ${sched.time}`;
-        }
-        if (sched.fixed) sub += ` <span class="rep">· 매주</span>`;
-      }
-      return `<div class="brow${done ? " done" : ""}" data-name="${escapeHtml(tb.name)}" data-difficulty="${tb.difficulty}">
-        <span class="gem" style="--gc:${gc}"></span>
-        <span class="bi"><span class="bn">${bossLabel(tb)}</span><span class="bs">${sub}</span></span>
-        <span class="chk${done ? "" : " no"}">✓</span>
+
+  const browHtml = (tb, inParty) => {
+    const live = byKey.get(bossKey(tb.name, tb.difficulty));
+    const done = !!(live && live.complete_flag === "true");
+    const gc = inParty ? "var(--c-party)" : "var(--c-solo)";
+    // 파티 카드 안에서는 헤더가 이미 요일·시간을 말하고 있으므로 보조줄을 안 붙인다.
+    let subHtml = "";
+    if (!inParty) {
+      const sched = schedule[scheduleKey(ocid, tb.name, tb.difficulty)] || {};
+      const day = sched.day !== null && sched.day !== undefined ? ` · ${DAY_LABELS_FULL[sched.day]}` : "";
+      subHtml = `<span class="bs">솔플${day}</span>`;
+    }
+    return `<div class="brow${done ? " done" : ""}" data-name="${escapeHtml(tb.name)}" data-difficulty="${tb.difficulty}">
+      <span class="gem" style="--gc:${gc}"></span>
+      <span class="bi"><span class="bn">${bossLabel(tb)}</span>${subHtml}</span>
+      <span class="chk${done ? "" : " no"}">✓</span>
+    </div>`;
+  };
+
+  // 파티에 묶인 보스는 위 파티 카드로 올라가고 아래 보스 목록에서는 빠진다.
+  const partyList = parties[ocid] || [];
+  const partySec = document.getElementById("charDetailPartySec");
+  partySec.classList.toggle("empty", partyList.length === 0);
+  document.getElementById("charDetailPartyRows").innerHTML = partyList
+    .map((pt) => {
+      const members = tracked.filter((tb) => pt.bosses.includes(bossKey(tb.name, tb.difficulty)));
+      const fixed = pt.fixed ? ` <span class="rep">· 매주</span>` : "";
+      return `<div class="pgrp" data-pid="${pt.id}">
+        <div class="pgh"><b>파티</b><span class="pgm">${partyWhenLabel(pt)}${fixed}</span><span class="pga">›</span></div>
+        ${members.map((tb) => browHtml(tb, true)).join("")}
+        <div class="pgadd">+ 보스 추가 · 시간 바꾸기</div>
       </div>`;
     })
     .join("");
-  document.getElementById("charDetailBossRows").querySelectorAll(".brow").forEach((row) => {
-    row.addEventListener("click", () => {
+
+  const soloBosses = tracked.filter((tb) => !pbm.has(bossKey(tb.name, tb.difficulty)));
+  document.getElementById("charDetailBossSec").classList.toggle("empty", soloBosses.length === 0);
+  document.getElementById("charDetailBossRows").innerHTML = soloBosses.map((tb) => browHtml(tb, false)).join("");
+
+  document.querySelectorAll("#charDetailView .brow").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
       const tb = tracked.find((t) => t.name === row.dataset.name && t.difficulty === row.dataset.difficulty);
       if (tb) openBossSheet(ocid, tb);
     });
+  });
+  document.querySelectorAll("#charDetailPartyRows .pgh, #charDetailPartyRows .pgadd").forEach((el) => {
+    el.addEventListener("click", () => openPartySheet(ocid, el.closest(".pgrp").dataset.pid));
   });
 }
 
@@ -797,6 +935,12 @@ async function renderBossPicker(ocid) {
         }
       } else {
         list = list.filter((b) => bossKey(b.name, b.difficulty) !== key);
+        // 관리 목록에서 뺐으면 파티에서도 뺀다. 텅 빈 파티는 지운다.
+        const parties = getParties();
+        if (parties[ocid]) {
+          parties[ocid] = parties[ocid].map((pt) => ({ ...pt, bosses: pt.bosses.filter((k) => k !== key) })).filter((pt) => pt.bosses.length > 0);
+          setParties(parties);
+        }
       }
       t[ocid] = list;
       setTracked(t);
@@ -839,6 +983,14 @@ async function resyncTrackedFromRegistration(ocid) {
       }
     });
     if (changed) setSchedule(schedule);
+
+    // 관리 목록에서 빠진 보스는 파티에서도 뺀다. 텅 빈 파티는 지운다.
+    const parties = getParties();
+    if (parties[ocid]) {
+      const removed = new Set(removedKeys);
+      parties[ocid] = parties[ocid].map((pt) => ({ ...pt, bosses: pt.bosses.filter((k) => !removed.has(k)) })).filter((pt) => pt.bosses.length > 0);
+      setParties(parties);
+    }
   }
 
   renderCharList();
@@ -851,6 +1003,9 @@ function initCharacterTab() {
   document.getElementById("charDetailBack").addEventListener("click", showCharList);
   document.getElementById("bossPickerBack").addEventListener("click", () => showCharDetail(currentCharDetailOcid));
   document.getElementById("openBossPickerBtn").addEventListener("click", showBossPicker);
+  document.getElementById("createPartyBtn").addEventListener("click", () => {
+    if (currentCharDetailOcid) openPartySheet(currentCharDetailOcid, null);
+  });
   document.getElementById("resyncTrackedBtn").addEventListener("click", () => {
     if (currentCharDetailOcid) resyncTrackedFromRegistration(currentCharDetailOcid);
   });
@@ -870,10 +1025,9 @@ function openBossSheet(ocid, tb) {
   const sched = getSchedule()[key] || {};
   const pp = getPostponed()[key];
   sheetState = {
-    party: !!sched.party,
+    // 파티 소속 여부·요일·시간은 파티가 갖는다. 여기서는 읽기 전용으로 보여주기만 한다.
+    party: partyByBossMap(getParties(), ocid).get(bossKey(tb.name, tb.difficulty)) || null,
     day: sched.day !== undefined ? sched.day : null,
-    time: sched.time || "",
-    fixed: !!sched.fixed,
     postponed: !!(pp && !pp.off),
     memo: pp ? pp.memo || "" : "",
     checkedDrops: new Set(),
@@ -918,42 +1072,29 @@ function renderBossSheet() {
           .join(", ")}</p>`
       : "";
 
+  const inParty = !!sheetState.party;
+  const whenHtml = inParty
+    ? `<div class="fld">
+      <div class="fl">파티</div>
+      <div class="pline">${partyWhenLabel(sheetState.party)}${sheetState.party.fixed ? " · 매주" : ""}<span class="pnote">요일·시간은 파티에서 바꾼다</span></div>
+    </div>`
+    : `<div class="fld" id="fldDay">
+      <div class="fl">요일</div>
+      <div class="days">${daysHtml}</div>
+    </div>`;
+
   document.getElementById("bossSheet").innerHTML = `
     <div class="grab"></div>
     <div class="sh"><span class="gem" style="--gc:${gc}"></span><b>${bossLabel(sheetTb)}</b></div>
     <div class="shm">${escapeHtml(ch ? ch.name : "")} · 이번 주 ${done ? "완료" : "미완료"}</div>
 
-    <div class="fld">
-      <div class="swrow">
-        <span><span class="st">파티로 진행</span><span class="sd">켜면 오늘 화면 파티 약속에 뜬다</span></span>
-        <button type="button" class="sw${sheetState.party ? " on" : ""}" id="swParty"></button>
-      </div>
-    </div>
+    ${whenHtml}
 
-    <div class="fld" id="fldDay">
-      <div class="fl">요일</div>
-      <div class="days">${daysHtml}</div>
-    </div>
-
-    <div class="fld${sheetState.party ? "" : " off"}" id="fldTime">
-      <div class="fl">시간</div>
-      <div class="timebox">
-        <input type="time" id="sheetTimeInput" value="${sheetState.time || ""}" />
-      </div>
-    </div>
-
-    <div class="fld">
-      <div class="swrow">
-        <span><span class="st">매주 고정</span><span class="sd">목요일 리셋마다 자동으로 되살아난다</span></span>
-        <button type="button" class="sw${sheetState.fixed ? " on" : ""}" id="swFixed"></button>
-      </div>
-    </div>
-
-    <div class="fld${sheetState.party ? "" : " off"}" id="fldDrops">
+    <div class="fld${inParty ? "" : " off"}" id="fldDrops">
       <div class="fl">드랍템 기록</div>
       <div class="drops">${dropsHtml}</div>
       ${alreadyHtml}
-      ${sheetState.party ? "" : '<p class="offmsg">혼자 잡은 건 내가 갖는다. 분배할 게 없으니 기록도 안 한다.</p>'}
+      ${inParty ? "" : '<p class="offmsg">혼자 잡은 건 내가 갖는다. 분배할 게 없으니 기록도 안 한다.</p>'}
     </div>
 
     <div class="fld">
@@ -968,14 +1109,6 @@ function renderBossSheet() {
   `;
 
   document.getElementById("bossSheetDim").onclick = closeBossSheet;
-  document.getElementById("swParty").addEventListener("click", () => {
-    sheetState.party = !sheetState.party;
-    renderBossSheet();
-  });
-  document.getElementById("swFixed").addEventListener("click", () => {
-    sheetState.fixed = !sheetState.fixed;
-    renderBossSheet();
-  });
   document.getElementById("swPostponed").addEventListener("click", () => {
     sheetState.postponed = !sheetState.postponed;
     renderBossSheet();
@@ -985,14 +1118,9 @@ function renderBossSheet() {
 
   document.querySelectorAll("#fldDay .days button").forEach((btn) => {
     btn.addEventListener("click", () => {
-      sheetState.day = parseInt(btn.dataset.day, 10);
+      sheetState.day = sheetState.day === parseInt(btn.dataset.day, 10) ? null : parseInt(btn.dataset.day, 10);
       renderBossSheet();
     });
-  });
-  const timeInput = document.getElementById("sheetTimeInput");
-  timeInput.addEventListener("change", () => {
-    sheetState.time = timeInput.value;
-    renderBossSheet();
   });
   document.querySelectorAll("#fldDrops .drop").forEach((el) => {
     el.addEventListener("click", () => {
@@ -1007,9 +1135,12 @@ function renderBossSheet() {
 
 function saveBossSheet() {
   const key = scheduleKey(sheetOcid, sheetTb.name, sheetTb.difficulty);
+  const inParty = !!sheetState.party;
 
+  // 파티 소속이면 요일·시간은 파티 것이므로 mbn.schedule에 아무것도 안 쓴다.
   const schedule = getSchedule();
-  schedule[key] = { party: sheetState.party, day: sheetState.day, time: sheetState.time, fixed: sheetState.fixed };
+  if (inParty) delete schedule[key];
+  else schedule[key] = { day: sheetState.day };
   setSchedule(schedule);
 
   // §3-2 마지막 문단: 기존 객체를 펼쳐서 덮어써야 auto·off가 안 날아간다.
@@ -1025,7 +1156,7 @@ function saveBossSheet() {
   }
   setPostponed(postponed);
 
-  if (sheetState.party && sheetState.checkedDrops.size > 0) {
+  if (inParty && sheetState.checkedDrops.size > 0) {
     const loot = getLoot();
     const gotAt = kstDateStr();
     const bk = bossKey(sheetTb.name, sheetTb.difficulty);
@@ -1036,6 +1167,168 @@ function saveBossSheet() {
   }
 
   closeBossSheet();
+  renderToday();
+  renderCharList();
+  if (currentCharDetailOcid) renderCharDetail(currentCharDetailOcid);
+}
+
+// ==================================================================
+// 파티 시트 — 요일·시간·매주고정·묶을 보스를 한 화면에서 정한다
+// ==================================================================
+let partySheetOcid = null;
+let partySheetState = null; // { id: null이면 새 파티, day, time, fixed, bosses: Set }
+
+// pid를 안 주면 새 파티를 만드는 모드로 연다.
+function openPartySheet(ocid, pid) {
+  const pt = pid ? (getParties()[ocid] || []).find((p) => p.id === pid) : null;
+  partySheetOcid = ocid;
+  partySheetState = {
+    id: pt ? pt.id : null,
+    day: pt ? pt.day : null,
+    time: pt ? pt.time || "" : "",
+    fixed: pt ? !!pt.fixed : false,
+    bosses: new Set(pt ? pt.bosses : []),
+  };
+  document.getElementById("partySheetBg").hidden = false;
+  renderPartySheet();
+}
+function closePartySheet() {
+  document.getElementById("partySheetBg").hidden = true;
+  partySheetOcid = null;
+  partySheetState = null;
+}
+
+function renderPartySheet() {
+  const ocid = partySheetOcid;
+  const st = partySheetState;
+  const ch = getCharacters().find((c) => c.ocid === ocid);
+  const tracked = (getTracked()[ocid] || []).slice().sort((a, b) => a.order - b.order);
+  const pbm = partyByBossMap(getParties(), ocid);
+
+  const daysHtml = DAY_ORDER.map((d) => `<button type="button" data-day="${d}" class="${st.day === d ? "on" : ""}">${DAY_LABELS_FULL[d]}</button>`).join("");
+
+  const bossesHtml = tracked
+    .filter((tb) => tb.cycle !== "bossDaily")
+    .map((tb) => {
+      const bk = bossKey(tb.name, tb.difficulty);
+      const other = pbm.get(bk);
+      const taken = other && other.id !== st.id; // 다른 파티에 이미 묶여 있으면 못 고른다
+      const on = st.bosses.has(bk);
+      return `<div class="drop${on ? " on" : ""}${taken ? " taken" : ""}" data-bk="${escapeHtml(bk)}">
+        <span class="box">${on ? "✓" : ""}</span>
+        <span class="dn">${bossLabel(tb)}</span>
+        ${taken ? '<span class="pnote">다른 파티</span>' : ""}
+      </div>`;
+    })
+    .join("");
+
+  document.getElementById("partySheet").innerHTML = `
+    <div class="grab"></div>
+    <div class="sh"><span class="gem" style="--gc:var(--c-party)"></span><b>${st.id ? "파티" : "새 파티"}</b></div>
+    <div class="shm">${escapeHtml(ch ? ch.name : "")} · 보스 ${st.bosses.size}개</div>
+
+    <div class="fld" id="pfldDay">
+      <div class="fl">요일</div>
+      <div class="days">${daysHtml}</div>
+    </div>
+
+    <div class="fld">
+      <div class="fl">시간</div>
+      <div class="timebox"><input type="time" id="partyTimeInput" value="${st.time}" /></div>
+    </div>
+
+    <div class="fld">
+      <div class="swrow">
+        <span><span class="st">매주 고정</span><span class="sd">목요일 리셋마다 자동으로 되살아난다</span></span>
+        <button type="button" class="sw${st.fixed ? " on" : ""}" id="swPartyFixed"></button>
+      </div>
+    </div>
+
+    <div class="fld" id="pfldBosses">
+      <div class="fl">같이 도는 보스</div>
+      <div class="drops">${bossesHtml || '<p class="offmsg">잡을 보스를 먼저 골라주세요.</p>'}</div>
+    </div>
+
+    <button type="button" class="savebtn" id="partySaveBtn">저장</button>
+    ${st.id ? '<button type="button" class="delbtn" id="partyDeleteBtn">파티 해제</button>' : ""}
+  `;
+
+  document.getElementById("partySheetDim").onclick = closePartySheet;
+  document.querySelectorAll("#pfldDay .days button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const d = parseInt(btn.dataset.day, 10);
+      st.day = st.day === d ? null : d;
+      renderPartySheet();
+    });
+  });
+  document.getElementById("partyTimeInput").addEventListener("change", (e) => {
+    st.time = e.target.value;
+  });
+  document.getElementById("swPartyFixed").addEventListener("click", () => {
+    st.fixed = !st.fixed;
+    renderPartySheet();
+  });
+  document.querySelectorAll("#pfldBosses .drop").forEach((el) => {
+    if (el.classList.contains("taken")) return;
+    el.addEventListener("click", () => {
+      const bk = el.dataset.bk;
+      if (st.bosses.has(bk)) st.bosses.delete(bk);
+      else st.bosses.add(bk);
+      renderPartySheet();
+    });
+  });
+  document.getElementById("partySaveBtn").addEventListener("click", savePartySheet);
+  const delBtn = document.getElementById("partyDeleteBtn");
+  if (delBtn) delBtn.addEventListener("click", deletePartySheet);
+}
+
+function savePartySheet() {
+  const ocid = partySheetOcid;
+  const st = partySheetState;
+  const parties = getParties();
+  if (!parties[ocid]) parties[ocid] = [];
+
+  if (st.bosses.size === 0) {
+    // 보스가 하나도 없는 파티는 남길 이유가 없다. 기존 파티면 해제, 새 파티면 안 만든다.
+    if (st.id) parties[ocid] = parties[ocid].filter((p) => p.id !== st.id);
+  } else {
+    const bosses = Array.from(st.bosses);
+    const existing = st.id ? parties[ocid].find((p) => p.id === st.id) : null;
+    if (existing) {
+      existing.day = st.day;
+      existing.time = st.time;
+      existing.fixed = st.fixed;
+      existing.bosses = bosses;
+    } else {
+      parties[ocid].push({ id: cryptoId(), day: st.day, time: st.time, fixed: st.fixed, bosses });
+    }
+    // 파티로 묶은 보스의 개별 스케줄은 의미가 없어지므로 지운다.
+    const schedule = getSchedule();
+    let changed = false;
+    bosses.forEach((bk) => {
+      const key = ocid + "|" + bk;
+      if (schedule[key]) {
+        delete schedule[key];
+        changed = true;
+      }
+    });
+    if (changed) setSchedule(schedule);
+  }
+  setParties(parties);
+
+  closePartySheet();
+  renderToday();
+  renderCharList();
+  if (currentCharDetailOcid) renderCharDetail(currentCharDetailOcid);
+}
+
+function deletePartySheet() {
+  if (!confirm("이 파티를 해제할까요? 보스는 아래 목록으로 돌아갑니다.")) return;
+  const ocid = partySheetOcid;
+  const parties = getParties();
+  parties[ocid] = (parties[ocid] || []).filter((p) => p.id !== partySheetState.id);
+  setParties(parties);
+  closePartySheet();
   renderToday();
   renderCharList();
   if (currentCharDetailOcid) renderCharDetail(currentCharDetailOcid);
@@ -1343,6 +1636,7 @@ function registerServiceWorker() {
 
 // ---- 초기화 ----
 function init() {
+  migratePartiesOnce();
   initTabs();
   initCharacterTab();
   initDistributeTab();

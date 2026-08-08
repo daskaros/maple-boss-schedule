@@ -2,7 +2,7 @@
 
 // 이 파일이나 앱 셸 파일(index.html, app.js, manifest, 아이콘)을 하나라도 고치면
 // 아래 CACHE_VERSION을 반드시 올릴 것. 안 올리면 사용자 폰에 옛날 화면이 계속 남는다.
-const CACHE_VERSION = "v8";
+const CACHE_VERSION = "v9";
 const CACHE_NAME = "mbn-shell-" + CACHE_VERSION;
 
 const SHELL_FILES = [

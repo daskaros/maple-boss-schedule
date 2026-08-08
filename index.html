@@ -70,6 +70,7 @@
   .count { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
   .count b { font-size: 46px; font-weight: 800; letter-spacing: -.045em; line-height: 1; }
   .count span { font-size: 15px; color: var(--f-muted); }
+  .count-sub { margin-top: 4px; font-size: 12px; color: var(--f-muted); }
   .reset { margin-top: 10px; font-size: 12.5px; color: #b9a2ff; }
   .reset b { font-weight: 700; }
 
@@ -130,6 +131,20 @@
   }
   .row.clickable { cursor: pointer; }
 
+  /* ── 오늘 화면 파티 카드 ── */
+  .pcard {
+    border: 1px solid var(--f-line); border-radius: 12px;
+    padding: 4px 13px 6px; margin-bottom: 10px;
+    background: color-mix(in srgb, var(--c-party) 5%, transparent);
+  }
+  .pcard .pch { display: flex; align-items: baseline; gap: 9px; padding: 9px 0 4px; }
+  .pcard .pch .time { font-size: 15px; font-weight: 800; color: var(--f-accent); letter-spacing: -.02em; }
+  .pcard .pch .pcn { font-size: 13px; font-weight: 700; }
+  .pcard .pch .pcc { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--f-muted); }
+  .pcard .row { padding: 8px 0; }
+  .pcard .row .gem { width: 20px; height: 23px; }
+  .pcard .row .boss { font-size: 14px; }
+
   .crow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--f-line2); cursor: pointer; }
   .crow:last-child { border-bottom: 0; }
   .crow .cn2 { font-size: 15px; font-weight: 700; letter-spacing: -.015em; }
@@ -167,24 +182,22 @@
   .ccard .cn b { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
   .ccard .cn span { font-size: 12px; color: var(--f-muted); }
   .ccard .cn .arw { margin-left: auto; color: var(--f-muted); font-size: 15px; }
-  .ccard .prog { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
-  .ccard .prog .bar { flex: 1; height: 5px; border-radius: 3px; background: #232746; overflow: hidden; }
-  .ccard .prog .bar i { display: block; height: 100%; background: #a97bff; }
-  .ccard .prog .vl { font-size: 12px; font-weight: 700; color: var(--f-muted); }
-  .ccard .crystal { margin-top: 5px; font-size: 11px; color: var(--f-muted); }
+  .ccard .rem { display: flex; align-items: baseline; gap: 9px; margin-top: 9px; font-size: 12px; color: var(--f-muted); }
+  .ccard .rem .crystal { margin-left: auto; font-size: 11px; }
+  .st-ok { color: var(--f-ok); font-weight: 800; }
+  .st-bad { color: var(--f-danger); font-weight: 800; }
   .ccard .flag { margin-top: 9px; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: var(--f-warn); }
   .ccard .flag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--f-warn); }
   .ccard .empty-boss-note { margin-top: 8px; font-size: 12px; color: var(--f-muted); }
 
   /* ── 캐릭터 상세 ── */
-  .dhead { padding: 16px 20px 14px; border-bottom: 1px solid var(--f-line); }
-  .dhead .wk { display: flex; align-items: baseline; justify-content: space-between; }
-  .dhead .wk small { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--f-muted); }
-  .dhead .wk b { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
-  .dhead .wk b i { font-style: normal; color: var(--f-muted); font-weight: 600; }
-  .dhead .bar { margin-top: 8px; height: 5px; border-radius: 3px; background: #232746; overflow: hidden; }
-  .dhead .bar i { display: block; height: 100%; background: #a97bff; }
-  .dhead .crystal { margin-top: 7px; font-size: 11.5px; color: var(--f-muted); text-align: right; }
+  .dhead {
+    padding: 9px 20px 10px; border-bottom: 1px solid var(--f-line);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .dhead .wk { font-size: 12.5px; color: var(--f-muted); }
+  .dhead .wk b { font-size: 14px; font-weight: 800; letter-spacing: -.02em; }
+  .dhead .crystal { font-size: 11.5px; color: var(--f-muted); }
   .mon-badge { font-size: 10px; font-weight: 700; color: var(--f-accent); border: 1px solid var(--f-line); border-radius: 4px; padding: 1px 4px; margin-left: 4px; vertical-align: 1px; }
 
   .dsec { padding: 16px 20px 2px; }
@@ -223,6 +236,22 @@
   .brow.done .bn { color: var(--f-muted); }
 
   .fullbtn { margin: 14px 20px 20px; padding: 12px; text-align: center; border: 1px solid var(--f-line); border-radius: 10px; font-size: 13.5px; color: var(--f-accent); font-weight: 700; cursor: pointer; }
+
+  /* ── 캐릭터 상세 파티 묶음 ── */
+  .dsec.party h3 { color: var(--f-accent); }
+  .dsec.party h3::after { background: color-mix(in srgb, var(--f-accent) 26%, transparent); }
+  .pgrp {
+    border: 1px solid color-mix(in srgb, var(--c-party) 30%, transparent); border-radius: 12px;
+    background: color-mix(in srgb, var(--c-party) 5%, transparent);
+    padding: 0 13px; margin-bottom: 10px;
+  }
+  .pgh { display: flex; align-items: baseline; gap: 8px; padding: 11px 0 9px; cursor: pointer; }
+  .pgh b { font-size: 12.5px; font-weight: 800; color: var(--f-accent); }
+  .pgh .pgm { font-size: 12px; color: var(--f-muted); }
+  .pgh .pgm .rep { color: var(--f-accent); }
+  .pgh .pga { margin-left: auto; color: var(--f-muted); font-size: 15px; }
+  .pgrp .brow { border-top: 1px solid var(--f-line2); border-bottom: 0; }
+  .pgadd { padding: 10px 0 11px; border-top: 1px solid var(--f-line2); font-size: 12.5px; color: var(--f-accent); font-weight: 700; cursor: pointer; }
 
   /* ── 보스 고르기 ── */
   ul.boss-toggle-list { list-style: none; margin: 0; padding: 4px 20px 20px; }
@@ -271,7 +300,12 @@
   .drop.on { border-color: color-mix(in srgb, var(--f-warn) 40%, transparent); background: color-mix(in srgb, var(--f-warn) 7%, transparent); }
   .drop.on .box { border-color: var(--f-warn); background: var(--f-warn); }
   .drop .dn { flex: 1; font-size: 14px; font-weight: 600; }
+  .drop.taken { opacity: .4; cursor: default; }
+  .drop .pnote { font-size: 11px; color: var(--f-muted); white-space: nowrap; }
+  .pline { font-size: 14.5px; font-weight: 700; display: flex; align-items: baseline; gap: 9px; }
+  .pline .pnote { font-size: 11.5px; font-weight: 500; color: var(--f-muted); margin-left: auto; }
   .savebtn { margin-top: 18px; padding: 13px; text-align: center; border-radius: 11px; background: var(--f-accent); color: #0d0f1f; font-weight: 800; font-size: 15px; cursor: pointer; border: 0; width: 100%; font: inherit; }
+  .delbtn { margin-top: 10px; padding: 12px; text-align: center; border-radius: 11px; background: none; border: 1px solid color-mix(in srgb, var(--f-danger) 40%, transparent); color: var(--f-danger); font-weight: 700; font-size: 14px; cursor: pointer; width: 100%; font-family: inherit; }
   .fld.off { opacity: .32; pointer-events: none; }
   .fld.off .sw { background: #262a45; }
   .offmsg { margin: 10px 0 0; font-size: 12px; color: var(--f-muted); }
@@ -337,6 +371,7 @@
         <button type="button" class="refresh-btn" id="todayRefreshBtn">↻</button>
       </div>
       <div class="count"><b class="num" id="remainCount">0</b><span>개 남았어요</span></div>
+      <div class="count-sub" id="remainCountSub"></div>
       <div class="reset" id="weeklyResetLine"></div>
     </div>
     <div class="weekly" id="weeklySection"></div>
@@ -358,6 +393,8 @@
       <div class="navbar"><span class="back" id="charDetailBack">‹</span><h2 id="charDetailName"></h2><span class="sub" id="charDetailSub"></span></div>
       <div class="dhead" id="charDetailWeekly"></div>
       <div class="dsec loot" id="charDetailLoot"><h3>분배 안 한 템</h3><div id="charDetailLootRows"></div></div>
+      <div class="dsec party" id="charDetailPartySec"><h3>파티</h3><div id="charDetailPartyRows"></div></div>
+      <div class="fullbtn" id="createPartyBtn">+ 파티 만들기</div>
       <div class="dsec" id="charDetailBossSec"><h3>보스</h3><div id="charDetailBossRows"></div></div>
       <div class="fullbtn" id="openBossPickerBtn">잡을 보스 고르기</div>
     </div>
@@ -441,6 +478,11 @@
   <div class="sheet-bg" id="bossSheetBg" hidden>
     <div class="sheet-dim" id="bossSheetDim"></div>
     <div class="sheet" id="bossSheet"></div>
+  </div>
+
+  <div class="sheet-bg" id="partySheetBg" hidden>
+    <div class="sheet-dim" id="partySheetDim"></div>
+    <div class="sheet" id="partySheet"></div>
   </div>
 
 </div>
